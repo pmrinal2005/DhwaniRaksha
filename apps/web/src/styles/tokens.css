@@ -1,0 +1,20 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-canvas: var(--bg);
+  --color-surface: var(--surface-1);
+  --color-raised: var(--surface-2);
+  --color-inset: var(--surface-3);
+  --color-line: var(--stroke);
+  --color-foreground: var(--text-1);
+  --color-muted: var(--text-2);
+  --color-subtle: var(--text-3);
+  --color-ember: var(--ember);
+  --color-violet: var(--violet);
+  --color-verified: var(--emerald);
+  --color-warning: var(--amber);
+  --color-danger: var(--rose);
+  --font-sans: var(--font-inter);
+  --font-display: var(--font-space);
+  --font-mono: var(--font-mono-jet);
+}

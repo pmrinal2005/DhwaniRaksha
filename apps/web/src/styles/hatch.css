@@ -1,0 +1,5 @@
+.hatch-pattern line { stroke: var(--emerald); stroke-width: 1.4; opacity: .6; }
+.hatch-pattern-rose line { stroke: var(--rose); stroke-width: 1.4; opacity: .7; }
+.hatched-bar { fill: url(#ledger-hatch); }
+.hatched-bar-rejected { fill: url(#ledger-hatch-rose); }
+.spectrum-vad { fill: color-mix(in srgb, var(--emerald) 10%, transparent); }
