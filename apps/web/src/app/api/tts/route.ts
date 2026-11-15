@@ -10,7 +10,7 @@
  *                              This is how the mulaw telephony demo streams to <audio>.
  */
 import { NextResponse } from "next/server";
-import { gnaniCall, gnaniMode, mockMeta } from "@/lib/gnani/client";
+import { gnaniCall, gnaniMode, mockMeta, parseSseEvents } from "@/lib/gnani/client";
 import { buildTtsBody, ProtocolError, type TtsRequest } from "@/lib/gnani/payloads";
 import { normalizeIndicText, type NormalizerLocale } from "@/lib/gnani/normalizer";
 import { encodeWav, mockEmbedding, mockSttResponse, synthesizeSpeech } from "@/lib/gnani/mock";
@@ -41,7 +41,7 @@ interface Body {
   embedding_source?: { handle?: string; salt?: string };
   workflow?: string;
   normalize?: boolean;
-  response_mode?: "json" | "sse";
+  response_mode?: "json" | "sse" | "binary";
   gender?: "female" | "male";
 }
 
@@ -77,10 +77,15 @@ export async function POST(request: Request) {
   }
 
   const requestedContainer = (body.audio_config?.container ?? body.container ?? "wav") as AudioContainer;
+  const defaultSampleRate = requestedContainer === "mulaw" || requestedContainer === "alaw"
+    ? 8000
+    : model === "vachana-vc-v1"
+      ? 44100
+      : 48000;
   const audioConfig = {
-    // mulaw/alaw force 8 kHz upstream, so never ask Gnani for a 48 kHz µ-law clip.
-    sample_rate: body.audio_config?.sample_rate ?? body.sample_rate ?? (requestedContainer === "mulaw" || requestedContainer === "alaw" ? 8000 : 48000),
-    encoding: body.audio_config?.encoding ?? "linear_pcm",
+    // mulaw/alaw force 8 kHz upstream; vachana-vc-v1 caps at 44.1 kHz per VC.yml.
+    sample_rate: body.audio_config?.sample_rate ?? body.sample_rate ?? defaultSampleRate,
+    encoding: body.audio_config?.encoding,
     container: requestedContainer,
   };
 
@@ -136,17 +141,39 @@ export async function POST(request: Request) {
   }
 
   // ------------------------------------------------------------- live upstream
-  const path = body.response_mode === "sse" ? TTS_SSE_PATH : TTS_REST_PATH;
+  const isSse = body.response_mode === "sse";
+  const path = isSse ? TTS_SSE_PATH : TTS_REST_PATH;
   const upstream = await gnaniCall<Uint8Array>({
-    kind: body.response_mode === "sse" ? "tts_sse" : "tts_rest",
+    kind: isSse ? "tts_sse" : "tts_rest",
     path,
-    init: { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(built.body) },
+    init: {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...(isSse ? { Accept: "text/event-stream" } : {}),
+      },
+      body: JSON.stringify(built.body),
+    },
     timeoutMs: 55_000,
-    parse: async (response) => new Uint8Array(await response.arrayBuffer()),
+    parse: async (response) => {
+      if (!isSse) return new Uint8Array(await response.arrayBuffer());
+      const parts: Buffer[] = [];
+      for await (const evt of parseSseEvents(response)) {
+        let payload: { audio?: string; message?: string; error?: string } = {};
+        try { payload = JSON.parse(evt.data) as typeof payload; } catch { continue; }
+        if (evt.event === "error" || payload.error) {
+          throw new Error(payload.message || payload.error || "Upstream SSE synthesis failed.");
+        }
+        if (evt.event === "chunk" && payload.audio) {
+          parts.push(Buffer.from(payload.audio, "base64"));
+        }
+      }
+      return new Uint8Array(Buffer.concat(parts));
+    },
   });
 
   await recordCredit({
-    callKind: body.response_mode === "sse" ? "tts_sse" : "tts_rest", model, status: upstream.meta.status,
+    callKind: isSse ? "tts_sse" : "tts_rest", model, status: upstream.meta.status,
     queuedMs: upstream.meta.queuedMs, latencyMs: upstream.meta.latencyMs,
     credits: upstream.ok ? credits : 0, exactness: "estimated",
   });
@@ -155,20 +182,41 @@ export async function POST(request: Request) {
     return NextResponse.json({ ok: false, error: upstream.error, meta: upstream.meta, source: "gnani", exactness: "exact" }, { status: upstream.error?.status || 502 });
   }
 
-  if (body.response_mode === "sse") {
+  if (isSse) {
     return sseResponse(built, upstream.data, audioConfig.container, cacheKey, model, upstream.meta, built.strippedText);
   }
 
-  return new NextResponse(upstream.data as unknown as BodyInit, {
-    status: 200,
-    headers: {
-      "Content-Type": MIME_BY_CONTAINER[audioConfig.container] ?? "audio/wav",
-      "X-Gnani-Mode": "live",
-      "X-Gnani-Request-Id": upstream.meta.requestId,
-      "X-Cache-Key": cacheKey,
-      "X-Tags-Kept": built.keptTags.join(","),
-      "X-Normalized-Text": encodeURIComponent(built.strippedText.slice(0, 180)),
+  if (body.response_mode === "binary") {
+    return new NextResponse(upstream.data as unknown as BodyInit, {
+      status: 200,
+      headers: {
+        "Content-Type": MIME_BY_CONTAINER[audioConfig.container] ?? "audio/wav",
+        "X-Gnani-Mode": "live",
+        "X-Gnani-Request-Id": upstream.meta.requestId,
+        "X-Cache-Key": cacheKey,
+        "X-Tags-Kept": built.keptTags.join(","),
+        "X-Normalized-Text": encodeURIComponent(built.strippedText.slice(0, 180)),
+      },
+    });
+  }
+
+  return NextResponse.json({
+    ok: true,
+    audio: {
+      base64: Buffer.from(upstream.data).toString("base64"),
+      mime: MIME_BY_CONTAINER[audioConfig.container] ?? "audio/wav",
+      container: audioConfig.container,
+      sample_rate: audioConfig.sample_rate,
+      bytes: upstream.data.length,
+      duration_ms: Math.round((upstream.data.length / (audioConfig.container === "mulaw" || audioConfig.container === "alaw" ? 1 : 2)) / audioConfig.sample_rate * 1000),
     },
+    cache: { key: cacheKey, hit: false, stored: false },
+    normalization,
+    tags: { kept: built.keptTags, removed: built.removedTags },
+    spoken_text: built.strippedText,
+    meta: upstream.meta,
+    source: "gnani",
+    exactness: "exact",
   });
 }
 

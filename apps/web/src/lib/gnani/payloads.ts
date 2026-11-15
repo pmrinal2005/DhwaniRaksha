@@ -29,7 +29,7 @@ export interface SttRestRequest {
   topic?: string;
   previousText?: string;
   speakerNames?: string[];
-  substitutionMap?: { find: string; replace: string }[];
+  substitutionMap?: Array<{ patterns: string[]; replacement: string } | { find: string; replace: string }>;
   biasList?: string[];
   biasScore?: number;
   itnNativeNumerals?: boolean;
@@ -97,6 +97,7 @@ export function buildSttRestForm(request: SttRestRequest): FormData {
   if (!["wav", "mp3", "ogg", "flac", "aac", "m4a"].includes(extension)) {
     throw new ProtocolError("UNSUPPORTED_AUDIO_FORMAT", `Unsupported audio format '.${extension}'. Supported: wav, mp3, ogg, flac, aac, m4a.`);
   }
+  validateLanguageCodes(request.languageCodes, request.model);
   validateSttContext(request);
   const form = new FormData();
   form.set("audio_file", new Blob([request.audio as BlobPart], { type: request.contentType }), request.filename);
@@ -107,7 +108,13 @@ export function buildSttRestForm(request: SttRestRequest): FormData {
   if (request.topic) form.set("topic", request.topic);
   if (request.previousText) form.set("previous_text", request.previousText);
   if (request.speakerNames?.length) form.set("speaker_names", JSON.stringify(request.speakerNames));
-  if (request.substitutionMap?.length) form.set("substitution_map", JSON.stringify(request.substitutionMap.slice(0, 10)));
+  if (request.substitutionMap?.length) {
+    const normalizedRules = request.substitutionMap.slice(0, 10).map((rule) =>
+      "patterns" in rule ? rule : { patterns: [rule.find], replacement: rule.replace },
+    );
+    form.set("enable_substitution", "true");
+    form.set("substitution_map", JSON.stringify(normalizedRules));
+  }
   if (request.biasList?.length) {
     form.set("bias_list", JSON.stringify(request.biasList.slice(0, 100)));
     form.set("bias_score", String(request.biasScore ?? 1));
@@ -169,16 +176,31 @@ export function buildTtsBody(request: TtsRequest): TtsValidation {
   if ((audioConfig.container === "mulaw" || audioConfig.container === "alaw") && audioConfig.sample_rate !== 8000) {
     throw new ProtocolError("INVALID_REQUEST", `${audioConfig.container} forces an 8000 Hz sample rate; set sample_rate to 8000.`);
   }
+  if (request.model === "vachana-vc-v1") {
+    if (audioConfig.sample_rate > 44100) {
+      throw new ProtocolError("INVALID_REQUEST", `vachana-vc-v1 supports sample_rate 8000–44100 Hz (got ${audioConfig.sample_rate}).`);
+    }
+    if (audioConfig.container === "alaw") {
+      throw new ProtocolError("INVALID_REQUEST", "vachana-vc-v1 supports containers wav, raw, mp3, ogg, mulaw (not alaw).");
+    }
+  }
+
+  const defaultEncoding = audioConfig.container === "ogg"
+    ? "oggopus"
+    : audioConfig.container === "mulaw"
+      ? (request.model === "vachana-vc-v1" ? "linear_pcm" : "pcm_mulaw")
+      : audioConfig.container === "alaw"
+        ? "pcm_alaw"
+        : "linear_pcm";
 
   const body: Record<string, unknown> = {
     text,
     model: request.model,
-    language,
     audio_config: {
       sample_rate: audioConfig.sample_rate,
       num_channels: audioConfig.num_channels ?? 1,
       sample_width: audioConfig.sample_width ?? 2,
-      encoding: audioConfig.encoding ?? "linear_pcm",
+      encoding: audioConfig.encoding ?? defaultEncoding,
       container: audioConfig.container,
     },
   };
@@ -187,12 +209,12 @@ export function buildTtsBody(request: TtsRequest): TtsValidation {
       throw new ProtocolError("INVALID_REQUEST", "vachana-vc-v1 requires speaker_embedding {embedding, shape, dtype}.");
     }
     body.speaker_embedding = request.speakerEmbedding;
-    if (language !== "auto") body.language = language;
   } else {
     if (!request.voice) throw new ProtocolError("INVALID_REQUEST", "voice is required.");
     if (!isVoiceForModel(request.model, request.voice)) {
       throw new ProtocolError("INVALID_REQUEST", `Voice '${request.voice}' does not belong to ${request.model}. Voices are not interchangeable between models.`);
     }
+    body.language = language;
     body.voice = request.voice;
     body.speed = speed;
   }
@@ -200,7 +222,8 @@ export function buildTtsBody(request: TtsRequest): TtsValidation {
 }
 
 /** Locale list for Prisma — `indic-auto` by default, or deduplicated locales capped at 4. */
-export function resolveLanguageCodes(raw: string, model: SttModel): string[] {
+export function resolveLanguageCodes(raw: string, _model: SttModel): string[] {
+  void _model;
   if (raw === "indic-auto" || !raw) return ["indic-auto"];
   const codes = raw.split(",").map((code) => code.trim()).filter((code) => isLocale(code) || code === "indic-auto");
   return codes.length ? codes : ["indic-auto"];

@@ -11,7 +11,7 @@
  * short REST clips — the documented Prisma REST path — so the feature never dies.
  */
 import { NextResponse, type NextRequest } from "next/server";
-import { gnaniApiKey, gnaniMode } from "@/lib/gnani/client";
+import { gnaniApiKey, gnaniBaseUrl, gnaniMode } from "@/lib/gnani/client";
 import { resolveLanguageCodes, validateLanguageCodes } from "@/lib/gnani/payloads";
 import { CONTEXT_LIMITS, STT_WS_PATH } from "@/lib/gnani/voices";
 import { keytermsForDomain, WORKFLOWS, workflowMeta, type WorkflowDomain } from "@/lib/server/catalog";
@@ -122,26 +122,34 @@ export async function GET(request: NextRequest) {
   }
 
   // ---- live upstream (Node runtime, headers-capable client)
+  // Gnani streaming docs require non-ASCII characters in headers to be JSON-escaped (\uXXXX),
+  // and Node HTTP headers reject raw non-ASCII bytes with ERR_INVALID_CHAR.
+  const escapeNonAscii = (value: string) =>
+    value.replace(/[\u0080-\uffff]/g, (ch) => `\\u${ch.charCodeAt(0).toString(16).padStart(4, "0")}`);
+
   const headers: Record<string, string> = {
     "x-api-key-id": key,
     model,
     language_code: languageCodes.join(","),
     "x-sample-rate": String(sampleRate),
     format,
-    keyterms: JSON.stringify(keyterms),
-    topic,
-    speaker_names: JSON.stringify(speakerNames),
     "x-vad-threshold": sampleRate === 8000 ? "0.7" : "0.55",
     "x-min-silence-ms": "500",
     "x-min-speech-ms": sampleRate === 8000 ? "200" : "100",
     "x-idle-timeout-sec": "300",
   };
-  if (previousText) headers.previous_text = previousText;
+  if (model === "prisma-v3.0") {
+    headers.keyterms = escapeNonAscii(JSON.stringify(keyterms));
+    headers.topic = escapeNonAscii(topic);
+    headers.speaker_names = escapeNonAscii(JSON.stringify(speakerNames));
+    if (previousText) headers.previous_text = escapeNonAscii(previousText);
+  }
 
   let upstream: import("ws").WebSocket;
   try {
     const { WebSocket: NodeWebSocket } = await import("ws");
-    upstream = new NodeWebSocket(`wss://api.vachana.ai${STT_WS_PATH}`, { headers });
+    const wsBase = gnaniBaseUrl().replace(/^http/, "ws");
+    upstream = new NodeWebSocket(`${wsBase}${STT_WS_PATH}`, { headers });
   } catch (error) {
     server.send(JSON.stringify({ type: "error", message: `Could not open upstream STT socket: ${error instanceof Error ? error.message : "unknown error"}` }));
     server.close(1011, "upstream unavailable");

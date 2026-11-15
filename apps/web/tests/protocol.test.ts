@@ -9,7 +9,7 @@ import {
   cloakNormalFor, cosineSimilarity, decodeEmbeddingB64, encodeEmbeddingB64, householderReflect,
   l2Norm, reflectionAngleDeg, seededUnitVector, verificationBand,
 } from "../src/lib/gnani/bfloat16";
-import { buildTtsBody, validateLanguageCodes, validateSttContext, ProtocolError } from "../src/lib/gnani/payloads";
+import { buildSttRestForm, buildTtsBody, validateLanguageCodes, validateSttContext, ProtocolError } from "../src/lib/gnani/payloads";
 import { normalizeIndicText, parseQuantity, sanitizeAudioTags } from "../src/lib/gnani/normalizer";
 import { mockEmbedding, encodeMulaw } from "../src/lib/gnani/mock";
 import { ttsCacheKey } from "../src/lib/gnani/hash";
@@ -87,9 +87,31 @@ test("mulaw forces 8 kHz", () => {
   assert.doesNotThrow(() => buildTtsBody({ text: "नमस्ते", model: "timbre-v3.0", voice: "Shivani", language: "hi-IN", audioConfig: { sample_rate: 8000, container: "mulaw" } }));
 });
 
-test("vachana-vc-v1 requires a speaker embedding", () => {
+test("vachana-vc-v1 requires a speaker embedding and caps sample_rate at 44100 Hz", () => {
   assert.throws(() => buildTtsBody({ text: "नमस्ते", model: "vachana-vc-v1", language: "hi-IN", audioConfig: { sample_rate: 44100, container: "wav" } }), ProtocolError);
-  assert.doesNotThrow(() => buildTtsBody({ text: "नमस्ते", model: "vachana-vc-v1", language: "hi-IN", audioConfig: { sample_rate: 44100, container: "wav" }, speakerEmbedding: { embedding: mockEmbedding("x").embedding, shape: [1, 768], dtype: "torch.bfloat16" } }));
+  assert.throws(() => buildTtsBody({ text: "नमस्ते", model: "vachana-vc-v1", language: "hi-IN", audioConfig: { sample_rate: 48000, container: "wav" }, speakerEmbedding: { embedding: mockEmbedding("x").embedding, shape: [1, 768], dtype: "torch.bfloat16" } }), ProtocolError);
+  const valid = buildTtsBody({ text: "नमस्ते", model: "vachana-vc-v1", language: "hi-IN", audioConfig: { sample_rate: 44100, container: "wav" }, speakerEmbedding: { embedding: mockEmbedding("x").embedding, shape: [1, 768], dtype: "torch.bfloat16" } });
+  assert.equal("language" in valid.body, false);
+});
+
+test("buildTtsBody selects matching default encoding for ogg and mulaw containers", () => {
+  const ogg = buildTtsBody({ text: "नमस्ते", model: "timbre-v3.0", voice: "Shivani", language: "hi-IN", audioConfig: { sample_rate: 48000, container: "ogg" } });
+  assert.equal((ogg.body.audio_config as { encoding: string }).encoding, "oggopus");
+  const mulaw = buildTtsBody({ text: "नमस्ते", model: "timbre-v3.0", voice: "Shivani", language: "hi-IN", audioConfig: { sample_rate: 8000, container: "mulaw" } });
+  assert.equal((mulaw.body.audio_config as { encoding: string }).encoding, "pcm_mulaw");
+});
+
+test("buildSttRestForm sets enable_substitution and patterns/replacement rules", () => {
+  const form = buildSttRestForm({
+    audio: new Uint8Array([1, 2, 3, 4]),
+    filename: "clip.wav",
+    contentType: "audio/wav",
+    model: "prisma-v3.0",
+    languageCodes: ["hi-IN"],
+    substitutionMap: [{ patterns: ["ok", "okay"], replacement: "acknowledged" }],
+  });
+  assert.equal(form.get("enable_substitution"), "true");
+  assert.deepEqual(JSON.parse(String(form.get("substitution_map"))), [{ patterns: ["ok", "okay"], replacement: "acknowledged" }]);
 });
 
 /* -------------------------------------------------------------- normalizer */

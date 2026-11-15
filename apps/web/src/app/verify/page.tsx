@@ -12,7 +12,7 @@ import { useRecorder } from "@/lib/use-recorder";
 import { useVoiceprintStore } from "@/lib/voiceprint-store";
 import { base64ToBlob, playBlob, NOISE_PRESETS, type NoisePreset } from "@/lib/audio";
 import { cloakVoice, embedVoice, synthesize, useInsights, verifyVoice, type CloakResponse, type VerifyResponse } from "@/lib/live-api";
-import { decodeEmbeddingB64 } from "@/lib/gnani/bfloat16";
+import { decodeEmbeddingB64, seededUnitVector } from "@/lib/gnani/bfloat16";
 import { shortHash } from "@/lib/format";
 import { LOCALE_META, type Locale } from "@/lib/gnani/voices";
 
@@ -58,8 +58,13 @@ export default function VerifyPage() {
       const result = await verifyVoice({ handle });
       setVerify(result);
       if (result.best_match) {
-        const vector = decodeEmbeddingB64(store.vector ? "" : "") as unknown as number[];
-        void vector;
+        const matchedVector = seededUnitVector(`${result.best_match.handle}:mudra-vani-enrolment`);
+        store.setVerification({
+          cosine: result.best_match.cosine,
+          band: result.band,
+          compareVector: matchedVector,
+          compareHandle: result.best_match.handle,
+        });
       }
       toast.success("Verification complete", { description: `Best match ${result.best_match?.handle ?? "none"} · ${result.band.replace("_", " ")}` });
     } catch (error) {

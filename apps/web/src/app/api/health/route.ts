@@ -1,8 +1,7 @@
 /** GET /api/health — dependency probes with real round-trip timings. */
 import { NextResponse } from "next/server";
-import { gnaniApiKey, gnaniMode, mutexSnapshot } from "@/lib/gnani/client";
+import { gnaniApiKey, gnaniBaseUrl, gnaniMode, mutexSnapshot } from "@/lib/gnani/client";
 import { configuredMode } from "@/lib/server/store";
-import { GNANI_BASE_URL } from "@/lib/gnani/voices";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -17,7 +16,7 @@ export async function GET() {
     try {
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), 6_000);
-      const response = await fetch(`${GNANI_BASE_URL}/docs`, { method: "GET", signal: controller.signal, cache: "no-store" });
+      const response = await fetch(`${gnaniBaseUrl()}/docs`, { method: "GET", signal: controller.signal, cache: "no-store" });
       clearTimeout(timer);
       probes.push({ service: "gnani_rest", state: response.ok || response.status < 500 ? "up" : "degraded", rtt_ms: Date.now() - t0, detail: `api.vachana.ai → ${response.status}` });
     } catch (error) {

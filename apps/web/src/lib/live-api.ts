@@ -150,19 +150,26 @@ export interface TtsOptions {
 }
 
 export async function synthesize(options: TtsOptions): Promise<TtsResult> {
+  const model = options.model ?? "timbre-v3.0";
+  const container = options.container ?? "wav";
+  const defaultSampleRate = container === "mulaw" || container === "alaw"
+    ? 8000
+    : model === "vachana-vc-v1"
+      ? 44100
+      : 48000;
   return api<TtsResult>("/api/tts", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({
       text: options.text,
-      model: options.model ?? "timbre-v3.0",
+      model,
       voice: options.voice,
       language: options.language ?? "hi-IN",
       speed: options.speed,
       workflow: options.workflow,
       normalize: options.normalize,
       gender: options.gender,
-      audio_config: { container: options.container ?? "wav", sample_rate: options.sample_rate ?? (options.container === "mulaw" ? 8000 : 48000) },
+      audio_config: { container, sample_rate: options.sample_rate ?? defaultSampleRate },
       speaker_embedding: options.embedding ? { embedding: options.embedding, shape: [1, 768], dtype: "torch.bfloat16" } : undefined,
       embedding_source: options.handle ? { handle: options.handle } : undefined,
     }),

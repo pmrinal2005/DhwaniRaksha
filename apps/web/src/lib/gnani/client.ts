@@ -84,6 +84,10 @@ export async function withSingleActiveRequest<T>(kind: GnaniCallKind, fn: () => 
   }
 }
 
+export function gnaniBaseUrl(): string {
+  return process.env.GNANI_BASE_URL?.trim().replace(/\/$/, "") || GNANI_BASE_URL;
+}
+
 export function gnaniApiKey(): string | null {
   const key = process.env.GNANI_API_KEY?.trim();
   if (!key) return null;
@@ -182,7 +186,7 @@ export async function gnaniCall<T>(options: CallOptions<T>): Promise<GnaniRespon
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 45_000);
       try {
-        const response = await fetch(`${GNANI_BASE_URL}${options.path}`, {
+        const response = await fetch(`${gnaniBaseUrl()}${options.path}`, {
           ...options.init,
           signal: controller.signal,
           headers: {
