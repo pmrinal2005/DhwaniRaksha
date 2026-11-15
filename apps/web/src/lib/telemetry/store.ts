@@ -70,15 +70,16 @@ export const useTelemetryStore = create<TelemetryState>((set) => ({
     if (event.type === "vc.embedding") next.embeddings = { ...state.embeddings, [event.payload.user_id]: { ...event.payload, ts: event.ts } };
     if (event.type === "vc.verify") next.verifications = { ...state.verifications, [event.payload.user_id]: { ...event.payload, ts: event.ts } };
     if (event.type === "vc.cloak") next.cloak = { ...event.payload, ts: event.ts };
-    if (event.type === "ledger.minted") next.minted = [{ ...event.payload, created_at: event.ts, ts: event.ts }, ...state.minted].slice(0, LAYOUT.eventLimit);
+    if (event.type === "ledger.minted") next.minted = [{ ...event.payload, chain_valid: true, created_at: event.ts, ts: event.ts }, ...state.minted].slice(0, LAYOUT.eventLimit);
     const auditId = event.type;
     const previousAudit = state.audit[auditId];
     next.audit = { ...state.audit, [auditId]: { ...auditFromEvent(event), updates: (previousAudit?.updates ?? 0) + 1 } };
     return next;
   }),
-  schemaError: (message, issues) => set((state) => ({
-    events: [{ event_id: `schema-${state.events.length}`, type: "schema_error", ts: new Date().toISOString(), source: "computed", exactness: "exact", payload: { message, issues } }, ...state.events].slice(0, LAYOUT.eventLimit),
-  })),
+  schemaError: (message, issues) => set((state) => {
+    const errorEvent: StreamEvent = { event_id: `schema-${state.events.length}`, type: "schema_error", ts: new Date().toISOString(), source: "computed", exactness: "exact", payload: { message, issues } };
+    return { events: [errorEvent, ...state.events].slice(0, LAYOUT.eventLimit) };
+  }),
   setDsp: (dsp) => set((state) => ({
     dsp, dspHistory: [...state.dspHistory, dsp].slice(-LAYOUT.chartSamples),
     audit: { ...state.audit, "edge-dsp": { sourcePath: "AudioWorklet DSP telemetry", source: "edge-dsp", lastUpdate: dsp.ts, updates: (state.audit["edge-dsp"]?.updates ?? 0) + 1 } },

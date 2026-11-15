@@ -20,7 +20,7 @@ export function useLiveKitParticipants() {
       participants.forEach((participant: Participant) => {
         const event = {
           type: "livekit.participant", ts: new Date().toISOString(), source: "livekit", exactness: "exact",
-          payload: { id: participant.identity, name: participant.name || participant.identity, speaking: participant.isSpeaking, connection_quality: ConnectionQuality[participant.connectionQuality] ?? "unknown", metadata: participant.metadata },
+          payload: { id: participant.identity, name: participant.name || participant.identity, speaking: participant.isSpeaking, connection_quality: qualityLabel(participant.connectionQuality), metadata: participant.metadata },
         };
         // LiveKit is kept separate until the dashboard contract has a matching event.
         window.dispatchEvent(new CustomEvent("mudra:livekit", { detail: event }));
@@ -40,4 +40,13 @@ export function useLiveKitParticipants() {
     void connect();
     return () => { disposed = true; events.forEach((event) => room.off(event, publishParticipants)); void room.disconnect(); roomRef.current = null; };
   }, []);
+}
+
+function qualityLabel(quality: ConnectionQuality): string {
+  switch (quality) {
+    case ConnectionQuality.Excellent: return "excellent";
+    case ConnectionQuality.Good: return "good";
+    case ConnectionQuality.Poor: return "poor";
+    default: return "unknown";
+  }
 }

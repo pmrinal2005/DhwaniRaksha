@@ -20,6 +20,14 @@ export function responseSchema<T extends z.ZodType>(data: T) {
 }
 
 export type ApiPayload<T> = { data: T; source: DataSource; exactness: Exactness };
+/**
+ * Origin for every same-deploy API call.
+ *
+ * Dhwani-Raksha serves its own API routes (app/api/**), so this is empty by
+ * default and all fetches stay relative — no CORS, no second backend to deploy.
+ * Set NEXT_PUBLIC_DASH_API_ORIGIN only to point the UI at a separately hosted
+ * instance of this same Next.js app.
+ */
 export const apiOrigin = (process.env.NEXT_PUBLIC_DASH_API_ORIGIN ?? "").replace(/\/$/, "");
 
 export function dashboardUrl(path: string, params?: Record<string, string | undefined>) {

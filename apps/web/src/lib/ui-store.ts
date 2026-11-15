@@ -26,6 +26,7 @@ interface UiState {
   setWorkflowOrder: (order: string[]) => void;
   toggleSidebar: () => void;
   toggleRightRail: () => void;
+  closeRightRail: () => void;
   setCommandOpen: (open: boolean) => void;
   toggleAudit: () => void;
   setMicArmed: (armed: boolean) => void;
@@ -45,6 +46,7 @@ export const useUiStore = create<UiState>()(persist((set) => ({
   setWorkflowOrder: (workflowOrder) => set({ workflowOrder }),
   toggleSidebar: () => set((state) => ({ sidebarExpanded: !state.sidebarExpanded })),
   toggleRightRail: () => set((state) => ({ rightRailOpen: !state.rightRailOpen })),
+  closeRightRail: () => set({ rightRailOpen: false }),
   setCommandOpen: (commandOpen) => set({ commandOpen }),
   toggleAudit: () => set((state) => ({ auditOpen: !state.auditOpen })),
   setMicArmed: (micArmed) => set({ micArmed }),
